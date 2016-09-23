@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -27,10 +28,11 @@ type url struct {
 }
 
 var (
-	timeOut        = flag.Int64("t", 10, "time val")
-	parallels      = flag.Int("p", 1, "parallels range 1..4")
-	beaconInterval = flag.Int64("b", 10, "beacon interval")
-	debug          = flag.Bool("debug", false, "enable debug mode")
+	timeOut         = flag.Int64("t", 10, "time val")
+	parallels       = flag.Int("p", 1, "parallels range 1..4")
+	beaconInterval  = flag.Int64("b", 10, "beacon interval")
+	debug           = flag.Bool("debug", false, "enable debug mode")
+	observerAddress = flag.String("o", "127.0.0.1:10001", "observer server address")
 )
 
 func initialize() {
@@ -74,7 +76,7 @@ func fetchURL(wg *sync.WaitGroup, warkerNum int, urlQueue <-chan url, r chan<- r
 	}
 }
 
-func GetInfo() (*info, error) {
+func getInfo() (*info, error) {
 	var wg sync.WaitGroup
 	var ret info
 	ret = map[string][]interface{}{}
@@ -84,8 +86,6 @@ func GetInfo() (*info, error) {
 		wg.Add(1)
 		go fetchURL(&wg, i, urls, r)
 	}
-	//urls <- url{"http://httpbin.org/ip", "url"}
-	//urls <- url{"http://httpbin.org/ip", "url"}
 	if !*debug {
 		urls <- url{"http://169.254.169.254/latest/meta-data/placement/availability-zone", "az"}
 		urls <- url{"http://169.254.169.254/latest/meta-data/instance-id", "instance-id"}
@@ -119,10 +119,36 @@ func GetInfo() (*info, error) {
 	return &ret, nil
 }
 
+func sendBeacon(i *info) error {
+	serverAddr, err := net.ResolveUDPAddr("udp", *observerAddress)
+	if err != nil {
+		return err
+	}
+	localAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	conn, err := net.DialUDP("udp", localAddr, serverAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	bin, err := json.Marshal(i)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(bin)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
 	flag.Parse()
 	initialize()
-	info, _ := GetInfo()
-	bin, _ := json.Marshal(info)
-	fmt.Println(string(bin))
+	info, _ := getInfo()
+	fmt.Println(sendBeacon(info))
+	fmt.Println(sendBeacon(info))
 }
